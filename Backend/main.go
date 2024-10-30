@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
-
+	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
 
 var client *mongo.Client
 var collection *mongo.Collection
@@ -39,48 +41,63 @@ func init() {
 	collection = client.Database("Library").Collection("AssignBook")
 }
 
-// CreateBook inserts a new book document into the collection.
-func CreateBook(isbn string, title string, author string) {
+// CreateBookHandler handles the creation of a new book.
+func CreateBookHandler(c *gin.Context) {
+	type Book struct {
+		ISBN   string `json:"isbn"`
+		Title  string `json:"title"`
+		Author string `json:"author"`
+	}
+
+	var newBook Book
+	if err := c.BindJSON(&newBook); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	book := bson.D{
-		{Key: "isbn", Value: isbn},
-		{Key: "title", Value: title},
-		{Key: "author", Value: author},
+		{Key: "isbn", Value: newBook.ISBN},
+		{Key: "title", Value: newBook.Title},
+		{Key: "author", Value: newBook.Author},
 	}
 
-	insertResult, err := collection.InsertOne(ctx, book)
+	_, err := collection.InsertOne(ctx, book)
 	if err != nil {
-		log.Fatal("Error inserting book:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not insert book"})
+		return
 	}
-	fmt.Println("Inserted a book with ID:", insertResult.InsertedID)
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Book created successfully!"})
 }
 
-// ReadBooks fetches and prints all books in the collection.
-func ReadBooks() {
+// ReadBooksHandler handles fetching all books in the collection.
+func ReadBooksHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	cursor, err := collection.Find(ctx, bson.D{})
 	if err != nil {
-		log.Fatal("Error finding books:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch books"})
+		return
 	}
 	defer cursor.Close(ctx)
 
 	var results []bson.M
 	if err := cursor.All(ctx, &results); err != nil {
-		log.Fatal("Error reading results:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading results"})
+		return
 	}
 
-	fmt.Println("Books in collection:")
-	for _, result := range results {
-		fmt.Println(result)
-	}
+	c.JSON(http.StatusOK, results)
 }
 
-// DeleteBook removes a book document based on its ISBN.
-func DeleteBook(isbn string) {
+// DeleteBookHandler handles deleting a book by ISBN.
+func DeleteBookHandler(c *gin.Context) {
+	isbn := c.Param("isbn")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -88,16 +105,29 @@ func DeleteBook(isbn string) {
 
 	deleteResult, err := collection.DeleteOne(ctx, filter)
 	if err != nil {
-		log.Fatal("Error deleting book:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not delete book"})
+		return
 	}
-	fmt.Printf("Deleted %v document(s)\n", deleteResult.DeletedCount)
+
+	if deleteResult.DeletedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "No book found with that ISBN"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Book deleted successfully"})
 }
 
 func main() {
-	// Examples of using the functions
-	CreateBook("1234567890", "The Great Book", "John Doe")
-	ReadBooks()
-	// DeleteBook("1234567890")
+	// Initialize the Gin router
+	r := gin.Default()
 
-	defer client.Disconnect(context.Background())
+	// Define the API routes
+	r.POST("/books", CreateBookHandler)     // Create a new book
+	r.GET("/books", ReadBooksHandler)       // Read all books
+	r.DELETE("/books/:isbn", DeleteBookHandler) // Delete a book by ISBN
+
+	// Start the server
+	if err := r.Run(":8080"); err != nil {
+		log.Fatal("Server failed to start:", err)
+	}
 }
