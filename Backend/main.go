@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -15,7 +16,8 @@ import (
 
 var client *mongo.Client
 var collection *mongo.Collection
-
+var workerscollectionn *mongo.Collection
+var workSpecificWorkerCollection *mongo.Collection
 // ConnectDB initializes a MongoDB client and connects to the database.
 func ConnectDB() *mongo.Client {
 	uri := "mongodb+srv://jenilparmar:dsfkjnksdfaa@cluster0.utm2zr0.mongodb.net/" // Replace with your MongoDB URI
@@ -39,6 +41,8 @@ func ConnectDB() *mongo.Client {
 func init() {
 	client = ConnectDB()
 	collection = client.Database("Library").Collection("AssignBook")
+	workerscollectionn = client.Database("Library").Collection("Workers")
+	workSpecificWorkerCollection = client.Database("Library").Collection("WorkSpecificWorkers")
 }
 
 // CreateBookHandler handles the creation of a new book.
@@ -116,6 +120,56 @@ func DeleteBookHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Book deleted successfully"})
 }
+//////get all list of services available and name workers it will return [{imgUrl , nameOfWorker},{}]
+func workers(c *gin.Context){         
+	ctx  ,cancel := context.WithTimeout(context.Background(),5*time.Second)
+	defer cancel()
+
+	cursor , err := workerscollectionn.Find(ctx , bson.D{})
+	
+	if err!=nil{
+		return
+	}
+
+	defer cursor.Close(ctx)
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading results"})
+		return
+	}
+	c.JSON(http.StatusOK, results)
+
+
+}
+func AddWorker(c *gin.Context) {
+	type Worker struct {
+		ImgUrl       string `json:"imgUrl"`
+		NameOfWorker string `json:"nameOfWorker"`
+	}
+
+	var newWorker Worker
+	if err := c.BindJSON(&newWorker); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	worker := bson.D{
+		{Key: "imgUrl", Value: newWorker.ImgUrl},
+		{Key: "nameOfWorker", Value: newWorker.NameOfWorker},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := workerscollectionn.InsertOne(ctx, worker) // Use workersCollection instead of collection
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not insert worker"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Worker created successfully!"})
+}
+
 
 func main() {
 	// Initialize the Gin router
@@ -125,7 +179,8 @@ func main() {
 	r.POST("/books", CreateBookHandler)     // Create a new book
 	r.GET("/books", ReadBooksHandler)       // Read all books
 	r.DELETE("/books/:isbn", DeleteBookHandler) // Delete a book by ISBN
-
+	r.GET("/feriyo/workers" , workers)
+	r.POST("/feriyo/addWorkers" , AddWorker)
 	// Start the server
 	if err := r.Run(":8080"); err != nil {
 		log.Fatal("Server failed to start:", err)
